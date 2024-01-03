@@ -36,3 +36,4 @@ go run main.go
 10. .env file to hold varibles for the service, like GIN_RELASE_MODE and PORT
 11. OpenAPI Spec (swagger) to document the api spec
 12. A graceful shutdown that respects our timeout allowing requests in flight to complete prior to the service shutting down.
+13. Add additional tests for the queue package

@@ -2,6 +2,7 @@ package queue
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -28,6 +29,14 @@ const (
 	JobTypeNotTimeCritical = "NOT_TIME_CRITICAL"
 )
 
+// JobResult ...
+type JobResult string
+
+const (
+	// JobResultFailed represents job that failed and should be reprocessed.
+	JobResultFailed = "FAILED"
+)
+
 // ErrJobNotfound represents when a specific job was asked for but not found.
 var ErrJobNotfound = errors.New("job not found")
 
@@ -36,24 +45,27 @@ var ErrNoJobs = errors.New("no jobs")
 
 // Job represents the metadata of a job.
 type Job struct {
-	ID     int       `json:"id"`
-	Type   JobType   `json:"type"`
-	Status JobStatus `json:"status"`
+	ID       int       `json:"id"`
+	Type     JobType   `json:"type"`
+	Status   JobStatus `json:"status"`
+	Attempts int       `json:"attempts"`
 }
 
 // Queue stores jobs available to be dequeued as well as information about completed jobs.
 type Queue struct {
-	mu        sync.Mutex
-	Available []*Job
-	JobMap    map[int]*Job
-	count     int
+	mu                   sync.Mutex
+	NotCriticalAvailable []*Job
+	CriticalAvailable    []*Job
+	JobMap               map[int]*Job
+	count                int
 }
 
 // New returns an initialized queue.
 func New() *Queue {
 	return &Queue{
-		Available: []*Job{},
-		JobMap:    make(map[int]*Job),
+		NotCriticalAvailable: []*Job{},
+		CriticalAvailable:    []*Job{},
+		JobMap:               make(map[int]*Job),
 	}
 }
 
@@ -66,7 +78,15 @@ func (q *Queue) EnqueueJob(job Job) int {
 	q.count++
 	job.ID = q.count
 	job.Status = JobStatusQueued
-	q.Available = append(q.Available, &job)
+
+	switch job.Type {
+	case JobTypeTimeCritical:
+		q.CriticalAvailable = append(q.CriticalAvailable, &job)
+	case JobTypeNotTimeCritical:
+		q.NotCriticalAvailable = append(q.NotCriticalAvailable, &job)
+	default:
+		fmt.Println("Invalid Jop type:", job.Type)
+	}
 
 	q.JobMap[q.count] = &job
 	return q.count
@@ -77,25 +97,60 @@ func (q *Queue) EnqueueJob(job Job) int {
 func (q *Queue) DequeueJob() (Job, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if len(q.Available) < 1 {
+	if len(q.CriticalAvailable) < 1 && len(q.NotCriticalAvailable) < 1 {
 		return Job{}, ErrNoJobs
 	}
 
-	job := q.Available[0]
+	var job *Job
+	if len(q.CriticalAvailable) > 0 {
+		job = q.CriticalAvailable[0]
+		q.CriticalAvailable = q.CriticalAvailable[1:]
+	} else if len(q.NotCriticalAvailable) > 0 {
+		job = q.NotCriticalAvailable[0]
+		q.NotCriticalAvailable = q.NotCriticalAvailable[1:]
+	}
+
 	q.JobMap[job.ID].Status = JobStatusInProgress
-	q.Available = q.Available[1:]
 
 	return *job, nil
 }
 
+func (q *Queue) requeueFailed(job Job) error {
+
+	// increment the count prior to using it as our id.
+	// q.count++
+	// job.ID = q.count
+	job.Status = JobStatusQueued
+
+	switch job.Type {
+	case JobTypeTimeCritical:
+		q.CriticalAvailable = append(q.CriticalAvailable, &job)
+	case JobTypeNotTimeCritical:
+		q.NotCriticalAvailable = append(q.NotCriticalAvailable, &job)
+	default:
+		fmt.Println("Invalid Jop type:", job.Type)
+	}
+
+	job.Status = JobStatusQueued
+	q.JobMap[job.ID] = &job
+
+}
+
 // ConcludeJob marks a job concluded.
-func (q *Queue) ConcludeJob(id int) error {
+func (q *Queue) ConcludeJob(id int, result JobResult) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	_, ok := q.JobMap[id]
+	job, ok := q.JobMap[id]
 	if !ok {
 		return ErrJobNotfound
+	}
+
+	if result == JobResultFailed {
+
+		fmt.Println("hit")
+		// q.JobMap[id].Status = JobStatusConcluded
+		q.EnqueueJob(*job)
 	}
 
 	q.JobMap[id].Status = JobStatusConcluded

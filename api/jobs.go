@@ -3,6 +3,7 @@ package api
 import (
 	"cloud-stream-queue/queue"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -63,7 +64,24 @@ func (a *API) ConcludeJob(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpErr{Code: "invalid_id"})
 		return
 	}
-	err = a.service.ConcludeJob(id)
+
+	bytes, err := c.GetRawData()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpErr{Code: "invalid_json"})
+		return
+	}
+
+	var concludeBody struct {
+		Result queue.JobResult `json:"result"`
+	}
+
+	err = json.Unmarshal(bytes, &concludeBody)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpErr{Code: "invalid_json"})
+		return
+	}
+
+	err = a.service.ConcludeJob(id, concludeBody.Result)
 	if err != nil {
 		if err == queue.ErrJobNotfound {
 			c.JSON(http.StatusNotFound, httpErr{Code: "job_not_found"})
@@ -131,5 +149,7 @@ func (a *API) Debug(c *gin.Context) {
 		}
 	}
 
+	bytes, _ := json.Marshal(debugResp)
+	fmt.Println("Debug:", string(bytes))
 	c.JSON(http.StatusOK, debugResp)
 }
